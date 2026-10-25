@@ -23,5 +23,5 @@ jobs:
       - uses: "DeterminateSystems/flakehub-push@main"
         with:
           visibility: "public"
-          name: "snowfallorg/flake"
+          name: "OlaoluwaM/snowfall-flake"
           tag: "${{ inputs.tag }}"
