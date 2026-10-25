@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which('bash')
@@ -30,6 +31,8 @@ elif name == 'gum' and args[:1] == ['spin']:
     i = args.index('--')
     os.execvp(args[i + 1], args[i + 1:])
 elif name == 'nixos-option':
+    if args[0] != '--flake':
+        sys.exit('Unsupported option ' + args[0])
     print(os.environ.get('MOCK_OPTIONS', 'value'))
 sys.exit(int(os.environ.get('MOCK_' + name.upper().replace('-', '_') + '_STATUS', '0')))
 '''
@@ -50,13 +53,13 @@ class CLI(unittest.TestCase):
             p = self.bin / name
             p.write_text(f'#!{sys.executable}\n' + MOCK)
             p.chmod(0o755)
-        for name in ['filter-flake', 'filter-flakes', 'get-registry-flakes']:
+        for name in ['flake-ref', 'filter-flake', 'filter-flakes', 'get-registry-flakes']:
             p = self.bin / name
             p.write_text(f'#!{BASH}\nset -euo pipefail\n' + (ROOT / f'packages/flake/{name}.sh').read_text())
             p.chmod(0o755)
         script = (ROOT / 'packages/flake/flake.sh').read_text()
         script = script.replace('@help@', str(ROOT / 'packages/flake/help'))
-        script = script.replace('@isDarwin@', 'false').replace('@flakeCompat@', '/mock/flake-compat')
+        script = script.replace('@isDarwin@', 'false').replace('@system@', 'x86_64-linux')
         self.cli = self.root / 'flake'
         self.cli.write_text(script)
         self.env = dict(os.environ, PATH=str(self.bin) + ':' + os.environ['PATH'], CALL_LOG=str(self.log))
@@ -131,7 +134,7 @@ class CLI(unittest.TestCase):
         self.assertEqual(self.calls('gum'), [])
 
     def test_run_picker_preserves_selection(self):
-        choice = f'path:{self.cwd}#app'
+        choice = f'path:{quote(str(self.cwd))}#app'
         result = self.run_cli('run', '--pick', '--', 'two words',
                               MOCK_OUTPUTS=choice + '\n', MOCK_CHOICE='.#app')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -176,7 +179,7 @@ class CLI(unittest.TestCase):
     def test_optional_flags_do_not_add_empty_arguments(self):
         result = self.run_cli('check', '--show-trace', '--all-systems')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.calls('nix'), [['flake', 'check', '.#', '--show-trace', '--all-systems']])
+        self.assertEqual(self.calls('nix'), [['flake', 'check', '.', '--show-trace', '--all-systems']])
 
     def test_update_preserves_explicit_input_names(self):
         result = self.run_cli('update', 'first', 'input with spaces')
@@ -185,7 +188,7 @@ class CLI(unittest.TestCase):
 
     def test_system_picker_builds_selected_host(self):
         result = self.run_cli('build-nixos-vm', '--pick', '--show-trace',
-                              MOCK_OUTPUTS=f'path:{self.cwd}#host\n',
+                              MOCK_OUTPUTS=f'path:{quote(str(self.cwd))}#host\n',
                               MOCK_CHOICE='.#nixosConfigurations.host')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls('nixos-rebuild'), [['build-vm', '--flake', '.#host', '--show-trace']])
@@ -199,7 +202,7 @@ class CLI(unittest.TestCase):
         self.assertEqual(self.calls('sudo'), [])
 
     def test_option_picker_preserves_names(self):
-        result = self.run_cli('option', '--pick', MOCK_OUTPUTS=f'path:{self.cwd}#host\n',
+        result = self.run_cli('option', '--pick', MOCK_OUTPUTS=f'path:{quote(str(self.cwd))}#host\n',
                               MOCK_CHOICES=json.dumps(['.#host', '']),
                               MOCK_OPTIONS='This attribute set contains:\nfirst\nsecond name')
         self.assertNotEqual(result.returncode, 0)
@@ -247,6 +250,48 @@ class CLI(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls('nixos-rebuild'), [['switch', '--flake', uri]])
         self.assertFalse((self.cwd / 'SHOULD_NOT_EXIST').exists())
+
+
+    def test_named_check_builds_system_derivation(self):
+        result = self.run_cli('check', 'unit.tests')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls('nix'), [
+            ['build', '--no-link', f'path:{quote(str(self.cwd))}#checks.x86_64-linux."unit.tests"']
+        ])
+
+    def test_check_picker_builds_check_not_flake(self):
+        result = self.run_cli('check', '--pick', MOCK_OUTPUTS=f'path:{quote(str(self.cwd))}#alpha\n',
+                              MOCK_CHOICE='.#alpha')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls('nix')[-1],
+                         ['build', '--no-link', f'path:{quote(str(self.cwd))}#checks.x86_64-linux."alpha"'])
+
+    def test_named_check_rejects_all_systems(self):
+        result = self.run_cli('check', 'alpha', '--all-systems')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('whole flake', result.stdout)
+        self.assertFalse(self.log.exists())
+
+    def test_option_uses_current_flake_interface(self):
+        result = self.run_cli('option', 'demo', 'demo.message')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls('nixos-option'),
+                         [['--flake', f'path:{quote(str(self.cwd))}#demo', 'demo.message']])
+
+    def test_ref_encodes_local_paths_once(self):
+        for ref in [str(self.cwd), 'path:' + str(self.cwd), 'path:' + quote(str(self.cwd))]:
+            with self.subTest(ref=ref):
+                result = subprocess.run([str(self.bin / 'flake-ref'), ref], env=self.env,
+                                        text=True, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, 'path:' + quote(str(self.cwd)) + '\n')
+
+
+    def test_empty_check_fragment_means_whole_flake(self):
+        result = self.run_cli('check', '.#', '--all-systems')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls('nix'),
+                         [['flake', 'check', f'path:{quote(str(self.cwd))}', '--all-systems']])
 
 
 if __name__ == '__main__':

@@ -1,26 +1,14 @@
 # shellcheck shell=bash
-# @NOTE(jakehamilton): Some flakes like github:nix-community/emacs-overlay do not
-# provide lock files. This causes `nix eval` to error out as it can't write a new
-# lock file. Instead, we'll ignore this item and move on to others that play nicely.
-set +e
-
-# @NOTE(jakehamilton): We redirect stderr to /dev/null due to Nix complaining about
-# lock files on some flakes. The `nix eval` command does not provide a way to resolve
-# this, so we have to ignore errors here unfortunately.
-has_target=$(nix eval --impure --raw --expr "\
+ref=$(flake-ref "$2")
+# Registry discovery may include inaccessible or unlocked flakes. Skip those,
+# but keep all values out of the Nix source expression.
+# Nix attribute interpolation must reach Nix unchanged.
+# shellcheck disable=SC2016
+if has_target=$(SNOWFALL_REF="$ref" SNOWFALL_OUTPUT="$1" nix eval --impure --raw --expr '
 	let
-		flake = builtins.getFlake \"$2\";
-		outputNames = builtins.attrNames (flake.\"$1\" or {});
-		totalOutputs = builtins.length outputNames;
-	in
-	if flake ? \"$1\" && totalOutputs != 0 then
-		\"true\"
-	else
-		\"false\"
-" 2>/dev/null)
-
-if [[ "$has_target" == true ]]; then
-	echo "$2"
+		flake = builtins.getFlake (builtins.getEnv "SNOWFALL_REF");
+		output = builtins.getEnv "SNOWFALL_OUTPUT";
+	in if builtins.attrNames (flake.${output} or {}) != [] then "true" else "false"
+' 2>/dev/null) && [[ $has_target == true ]]; then
+	printf '%s\n' "$ref"
 fi
-
-set -e

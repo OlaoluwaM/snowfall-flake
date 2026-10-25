@@ -4,6 +4,7 @@
   python3,
   shellcheck,
   findutils,
+  jq,
   ...
 }:
 runCommand "flake-cli-checks"
@@ -13,6 +14,7 @@ runCommand "flake-cli-checks"
       python3
       shellcheck
       findutils
+      jq
     ];
   }
   ''

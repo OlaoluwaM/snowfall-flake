@@ -12,7 +12,7 @@ ${text_bold}USAGE${text_reset}
 ${text_bold}OPTIONS${text_reset}
 
   --pick, -p                          Pick a check to check from a list
-  --all-systems, -a                   Check all systems instead of just the current one
+  --all-systems, -a                   Check all systems (whole-flake checks only)
 
   --help, -h                          Show this help message
   --debug                             Show debug messages

@@ -12,6 +12,7 @@ DEBUG=${DEBUG:-"false"}
 
 is_darwin="@isDarwin@"
 help_root="@help@"
+host_system="@system@"
 
 #==============================#
 #           Logging            #
@@ -196,28 +197,25 @@ require_flake_nix() {
 
 # Usage: get_flake_attributes <output> <flake-uri>
 get_flake_attributes() {
-		local outputs=""
-
-		# @NOTE(jakehamilton): Some flakes may not contain the values we're looking for. In
-		# which case, we swallow errors here to keep the output clean.
-		set +e
-		outputs=$(nix eval --impure --raw --expr "\
-			let
-					flake = builtins.getFlake \"$2\";
-					outputs =
-						if builtins.elem \"$1\" [ \"packages\" \"devShells\" \"apps\" ] then
-							builtins.attrNames (flake.\"$1\".\${builtins.currentSystem} or {})
-						else
-							builtins.attrNames (flake.\"$1\" or {});
-					names = builtins.map (output: \"$2#\" + output) outputs;
-			in
-			builtins.concatStringsSep \"\\n\" names
-		" 2>/dev/null)
-		set -e
-
-		if [[ -n $outputs ]]; then
-			printf '%s\n' "$outputs"
-		fi
+	local ref
+	ref=$(flake-ref "$2")
+	# Pass user input as data, not as interpolated Nix source. Missing outputs
+	# are empty; genuine evaluation errors remain visible on stderr.
+	# Nix attribute interpolation must reach Nix unchanged.
+	# shellcheck disable=SC2016
+	SNOWFALL_REF="$ref" SNOWFALL_OUTPUT="$1" nix eval --impure --raw --expr '
+		let
+			ref = builtins.getEnv "SNOWFALL_REF";
+			output = builtins.getEnv "SNOWFALL_OUTPUT";
+			flake = builtins.getFlake ref;
+			values = flake.${output} or {};
+			names = builtins.attrNames (
+				if builtins.elem output [ "packages" "devShells" "apps" "checks" ]
+				then values.${builtins.currentSystem} or {}
+				else values
+			);
+		in builtins.concatStringsSep "" (map (name: ref + "#" + name + "\n") names)
+	'
 }
 
 # Usage: replace_each <prefix> <replacement> [items...]
@@ -268,19 +266,11 @@ system-rebuild() {
 
 # Usage: system_option <flake-uri> [hostname] [option]
 system_option() {
-	local flake_uri=$1
+	local ref
+	ref=$(flake-ref "$1")
 	local system=${2:-"$(hostname)"}
 	local option=${3:-""}
-
-	local root="${flake_uri}"
-
-	if [[ "$flake_uri" == *:* ]]; then
-		root="$(nix eval --impure --raw --expr "(builtins.getFlake ${flake_uri}).outPath")"
-	fi
-
-	local prefix="(import @flakeCompat@ { src = ${root}; }).defaultNix.nixosConfigurations.${system}"
-
-	nixos-option --config_expr "${prefix}.config" --options_expr "${prefix}.options" "${option}"
+	nixos-option --flake "$ref#$system" "${show_trace[@]}" "$option"
 }
 
 #==============================#
@@ -463,7 +453,7 @@ flake_switch() {
 			flake_uri="path:$(pwd)"
 		fi
 
-		if [[ "$flake_uri" != *:* ]] || [[ "$flake_uri" == *#* ]]; then
+		if [[ "$flake_uri" == *#* ]] || { [[ "$flake_uri" != *:* ]] && [[ ! -d "$flake_uri" ]]; }; then
 			log_fatal "${text_bold}flake switch --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
@@ -476,7 +466,7 @@ flake_switch() {
 		local raw_systems_choices
 		mapfile -t raw_systems_choices < <(get_flake_attributes "${target}Configurations" "$flake_uri")
 		local systems_choices
-		mapfile -t systems_choices < <(replace_each "path:$(pwd)" "." "${raw_systems_choices[@]}")
+		mapfile -t systems_choices < <(replace_each "$(flake-ref "$PWD")" "." "${raw_systems_choices[@]}")
 
 		if [[ ${#systems_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any ${target} systems in flake: ${flake_uri}"
@@ -537,7 +527,7 @@ flake_test() {
 			flake_uri="path:$(pwd)"
 		fi
 
-		if [[ "$flake_uri" != *:* ]] || [[ "$flake_uri" == *#* ]]; then
+		if [[ "$flake_uri" == *#* ]] || { [[ "$flake_uri" != *:* ]] && [[ ! -d "$flake_uri" ]]; }; then
 			log_fatal "${text_bold}flake test --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
@@ -550,7 +540,7 @@ flake_test() {
 		local raw_systems_choices
 		mapfile -t raw_systems_choices < <(get_flake_attributes "${target}Configurations" "$flake_uri")
 		local systems_choices
-		mapfile -t systems_choices < <(replace_each "path:$(pwd)" "." "${raw_systems_choices[@]}")
+		mapfile -t systems_choices < <(replace_each "$(flake-ref "$PWD")" "." "${raw_systems_choices[@]}")
 
 		if [[ ${#systems_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any ${target} systems in flake: ${flake_uri}"
@@ -615,7 +605,7 @@ flake_boot() {
 			flake_uri="path:$(pwd)"
 		fi
 
-		if [[ "$flake_uri" != *:* ]] || [[ "$flake_uri" == *#* ]]; then
+		if [[ "$flake_uri" == *#* ]] || { [[ "$flake_uri" != *:* ]] && [[ ! -d "$flake_uri" ]]; }; then
 			log_fatal "${text_bold}flake boot --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
@@ -628,7 +618,7 @@ flake_boot() {
 		local raw_systems_choices
 		mapfile -t raw_systems_choices < <(get_flake_attributes "${target}Configurations" "$flake_uri")
 		local systems_choices
-		mapfile -t systems_choices < <(replace_each "path:$(pwd)" "." "${raw_systems_choices[@]}")
+		mapfile -t systems_choices < <(replace_each "$(flake-ref "$PWD")" "." "${raw_systems_choices[@]}")
 
 		if [[ ${#systems_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any ${target} systems in flake: ${flake_uri}"
@@ -709,14 +699,14 @@ flake_build() {
 			flake_uri="path:$(pwd)"
 		fi
 
-		if [[ "$flake_uri" != *:* ]] || [[ "$flake_uri" == *#* ]]; then
+		if [[ "$flake_uri" == *#* ]] || { [[ "$flake_uri" != *:* ]] && [[ ! -d "$flake_uri" ]]; }; then
 			log_fatal "${text_bold}flake build --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
 		local raw_packages_choices
 		mapfile -t raw_packages_choices < <(get_flake_attributes packages "$flake_uri")
 		local packages_choices
-		mapfile -t packages_choices < <(replace_each "path:$(pwd)" "." "${raw_packages_choices[@]}")
+		mapfile -t packages_choices < <(replace_each "$(flake-ref "$PWD")" "." "${raw_packages_choices[@]}")
 
 		if [[ ${#packages_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any packages in flake: ${flake_uri}"
@@ -793,14 +783,14 @@ flake_build_system() {
 			flake_uri="path:$(pwd)"
 		fi
 
-		if [[ "$flake_uri" != *:* ]] || [[ "$flake_uri" == *#* ]]; then
+		if [[ "$flake_uri" == *#* ]] || { [[ "$flake_uri" != *:* ]] && [[ ! -d "$flake_uri" ]]; }; then
 			log_fatal "${text_bold}flake ${positional_args[0]} --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
 		local raw_systems_choices
 		mapfile -t raw_systems_choices < <(get_flake_attributes "${target}Configurations" "$flake_uri")
 		local systems_choices
-		mapfile -t systems_choices < <(replace_each "path:$(pwd)#" ".#${target}Configurations." "${raw_systems_choices[@]}")
+		mapfile -t systems_choices < <(replace_each "$(flake-ref "$PWD")#" ".#${target}Configurations." "${raw_systems_choices[@]}")
 
 		if [[ ${#systems_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any ${target} systems in flake: ${flake_uri}"
@@ -918,14 +908,14 @@ flake_dev() {
 			flake_uri="path:$(pwd)"
 		fi
 
-		if [[ "$flake_uri" != *:* ]] || [[ "$flake_uri" == *#* ]]; then
+		if [[ "$flake_uri" == *#* ]] || { [[ "$flake_uri" != *:* ]] && [[ ! -d "$flake_uri" ]]; }; then
 			log_fatal "${text_bold}flake dev --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
 		local raw_shells_choices
 		mapfile -t raw_shells_choices < <(get_flake_attributes devShells "$flake_uri")
 		local shells_choices
-		mapfile -t shells_choices < <(replace_each "path:$(pwd)" "." "${raw_shells_choices[@]}")
+		mapfile -t shells_choices < <(replace_each "$(flake-ref "$PWD")" "." "${raw_shells_choices[@]}")
 
 		if [[ ${#shells_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any shells in flake: ${flake_uri}"
@@ -987,14 +977,14 @@ flake_run() {
 			flake_uri="path:$(pwd)"
 		fi
 
-		if [[ "$flake_uri" != *:* ]] || [[ "$flake_uri" == *#* ]]; then
+		if [[ "$flake_uri" == *#* ]] || { [[ "$flake_uri" != *:* ]] && [[ ! -d "$flake_uri" ]]; }; then
 			log_fatal "${text_bold}flake run --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
 		local raw_apps_choices
 		mapfile -t raw_apps_choices < <(get_flake_attributes apps "$flake_uri")
 		local apps_choices
-		mapfile -t apps_choices < <(replace_each "path:$(pwd)" "." "${raw_apps_choices[@]}")
+		mapfile -t apps_choices < <(replace_each "$(flake-ref "$PWD")" "." "${raw_apps_choices[@]}")
 
 		if [[ ${#apps_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any apps in flake: ${flake_uri}"
@@ -1055,7 +1045,7 @@ flake_update() {
 		local raw_inputs_choices
 		mapfile -t raw_inputs_choices < <(get_flake_attributes inputs "$flake_uri")
 		local inputs_choices
-		mapfile -t inputs_choices < <(replace_each "$flake_uri#" "" "${raw_inputs_choices[@]}")
+		mapfile -t inputs_choices < <(replace_each "$(flake-ref "$flake_uri")#" "" "${raw_inputs_choices[@]}")
 
 		if [[ ${#inputs_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any inputs in flake: ${flake_uri}"
@@ -1129,7 +1119,7 @@ flake_option() {
 		local raw_systems_choices
 		mapfile -t raw_systems_choices < <(get_flake_attributes "${target}Configurations" "$flake_uri")
 		local systems_choices
-		mapfile -t systems_choices < <(replace_each "path:$(pwd)" "." "${raw_systems_choices[@]}")
+		mapfile -t systems_choices < <(replace_each "$(flake-ref "$PWD")" "." "${raw_systems_choices[@]}")
 
 		if [[ ${#systems_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any ${target} systems in flake: ${flake_uri}"
@@ -1163,7 +1153,7 @@ flake_option() {
 			current_option_path=$(join_by "." "${option_path[@]}")
 
 			local options_output
-			options_output=$(system_option "\"${flake_target}\"" "${system_name}" "${current_option_path}")
+			options_output=$(system_option "$flake_target" "${system_name}" "${current_option_path}")
 
 			if [[ "${options_output}" == "This attribute set contains:"* ]]; then
 				# Listing options
@@ -1231,7 +1221,7 @@ flake_option() {
 
 				log_info "Showing options for ${flake_uri}#${flake_hostname}"
 
-				system_option "\"${flake_uri}\"" "${flake_hostname}" "${option_name}"
+				system_option "$flake_uri" "${flake_hostname}" "${option_name}"
 			else
 				require_flake_nix
 
@@ -1248,6 +1238,23 @@ flake_option() {
 	fi
 }
 
+# Usage: build_check <flake-uri>#<check-name>
+build_check() {
+	local target=$1 ref name quoted_name
+	ref=${target%%#*}
+	ref=$(flake-ref "${ref:-.}")
+	name=${target#*#}
+	if [[ -z $name ]]; then
+		nix flake check "$ref" "${show_trace[@]}" "${all_systems[@]}"
+		return
+	fi
+	if [[ $opt_all_systems == true ]]; then
+		log_fatal "--all-systems applies to a whole flake, not a named check."
+	fi
+	quoted_name=$(jq -nr --arg name "$name" '$name | tojson')
+	nix build --no-link "$ref#checks.$host_system.$quoted_name" "${show_trace[@]}"
+}
+
 flake_check() {
 	if [[ $opt_help == true ]]; then
 		show_help check
@@ -1258,25 +1265,24 @@ flake_check() {
 		log_fatal "${text_bold}flake check${text_reset} received too many positional arguments."
 	fi
 
-	if [[ ${opt_pick} == true ]]; then
+	if [[ $opt_pick == true ]]; then
+		if [[ $opt_all_systems == true ]]; then
+			log_fatal "--all-systems applies to a whole flake, not a named check."
+		fi
 		local flake_uri=${positional_args[1]:-}
-
-		if [[ -z "${flake_uri}" ]]; then
+		if [[ -z $flake_uri ]]; then
 			require_flake_nix
-			flake_uri="path:$(pwd)"
+			flake_uri=$PWD
+		fi
+		if [[ $flake_uri == *#* ]]; then
+			log_fatal "${text_bold}flake check --pick${text_reset} expects a flake without a check name."
 		fi
 
-		if [[ "$flake_uri" != *:* ]] || [[ "$flake_uri" == *#* ]]; then
-			log_fatal "${text_bold}flake check --pick${text_reset} called with invalid flake uri: $flake_uri"
-		fi
-
-		local raw_checks_choices
+		local raw_checks_choices checks_choices
 		mapfile -t raw_checks_choices < <(get_flake_attributes checks "$flake_uri")
-		local checks_choices
-		mapfile -t checks_choices < <(replace_each "path:$(pwd)" "." "${raw_checks_choices[@]}")
-
-		if [[ ${#checks_choices[@]} == 0 ]]; then
-			log_fatal "Could not find any checks in flake: ${flake_uri}"
+		mapfile -t checks_choices < <(replace_each "$(flake-ref "$PWD")" "." "${raw_checks_choices[@]}")
+		if [[ ${#checks_choices[@]} -eq 0 ]]; then
+			log_fatal "Could not find any checks in flake: $flake_uri"
 		fi
 
 		log_info "Select a check:"
@@ -1288,30 +1294,23 @@ flake_check() {
 			--selected.foreground="4" \
 			"${checks_choices[@]}" \
 		)
-
-		if [[ -z ${check} ]]; then
+		if [[ -z $check ]]; then
 			log_fatal "No check selected"
 		fi
-
 		rewrite_line "$(log_info "Select a check: ${text_fg_blue}${check}${text_reset}")"
-
-		nix flake check "${check}" "${show_trace[@]}" "${all_systems[@]}"
+		build_check "$check"
+	elif [[ ${#positional_args[@]} -eq 1 ]]; then
+		require_flake_nix
+		nix flake check . "${show_trace[@]}" "${all_systems[@]}"
 	else
-		if [[ ${#positional_args[@]} == 1 ]]; then
-			require_flake_nix
-			log_info "Checking flake .#"
-			nix flake check ".#" "${show_trace[@]}" "${all_systems[@]}"
+		local target=${positional_args[1]}
+		if [[ $target == *#* ]]; then
+			build_check "$target"
+		elif [[ $target == *:* || -d $target ]]; then
+			nix flake check "$(flake-ref "$target")" "${show_trace[@]}" "${all_systems[@]}"
 		else
-			local check_name=${positional_args[1]}
-
-			if [[ "$check_name" == *:* ]] || [[ "$check_name" == *#* ]]; then
-				log_info "Checking flake ${check_name}"
-				nix flake check "$check_name" "${show_trace[@]}" "${all_systems[@]}"
-			else
-				require_flake_nix
-				log_info "Checking flake .#${check_name}"
-				nix flake check ".#${check_name}" "${show_trace[@]}" "${all_systems[@]}"
-			fi
+			require_flake_nix
+			build_check ".#$target"
 		fi
 	fi
 }

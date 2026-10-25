@@ -2,19 +2,25 @@
   stdenvNoCC,
   replaceVarsWith,
   gum,
+  jq,
   findutils,
   nixos-option,
   writeShellApplication,
-  inputs,
   ...
 }:
 
 let
   substitute = args: builtins.readFile (replaceVarsWith args);
 
+  flake-ref = writeShellApplication {
+    name = "flake-ref";
+    text = builtins.readFile ./flake-ref.sh;
+    runtimeInputs = [ jq ];
+  };
   filter-flake = writeShellApplication {
     name = "filter-flake";
     text = builtins.readFile ./filter-flake.sh;
+    runtimeInputs = [ flake-ref ];
   };
   filter-flakes = writeShellApplication {
     name = "filter-flakes";
@@ -36,12 +42,14 @@ writeShellApplication {
 
     replacements = {
       help = ./help;
-      flakeCompat = inputs.flake-compat;
+      system = stdenvNoCC.hostPlatform.system;
       isDarwin = if stdenvNoCC.hostPlatform.isDarwin then "true" else "false";
     };
   };
   runtimeInputs = [
     gum
+    jq
+    flake-ref
     filter-flakes
     get-registry-flakes
     nixos-option
