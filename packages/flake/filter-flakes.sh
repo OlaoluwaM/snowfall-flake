@@ -1,12 +1,8 @@
+# shellcheck shell=bash
 target=$1
 shift
 
-# Usage: split <string> <delimiter>
-split() {
-	IFS=$'\n' read -d "" -ra arr <<< "${1//$2/$'\n'}"
-	printf '%s\n' "${arr[@]}"
-}
-
-result=$(echo "$(split "$@" " ")" | xargs -P 10 -I {} bash -c "filter-flake ${target} {}")
-
-echo "$result"
+# Each URI stays a single argument, including paths with spaces or shell syntax.
+if [[ $# -gt 0 ]]; then
+	printf '%s\0' "$@" | xargs -0 -P 10 -I '{}' filter-flake "$target" '{}'
+fi

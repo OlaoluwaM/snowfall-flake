@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # @NOTE(jakehamilton): Some flakes like github:nix-community/emacs-overlay do not
 # provide lock files. This causes `nix eval` to error out as it can't write a new
 # lock file. Instead, we'll ignore this item and move on to others that play nicely.

@@ -1,11 +1,12 @@
-{ lib
-, stdenvNoCC
-, replaceVarsWith
-, gum
-, nixos-option
-, writeShellApplication
-, inputs
-, ...
+{
+  stdenvNoCC,
+  replaceVarsWith,
+  gum,
+  findutils,
+  nixos-option,
+  writeShellApplication,
+  inputs,
+  ...
 }:
 
 let
@@ -14,20 +15,18 @@ let
   filter-flake = writeShellApplication {
     name = "filter-flake";
     text = builtins.readFile ./filter-flake.sh;
-    checkPhase = "";
   };
   filter-flakes = writeShellApplication {
     name = "filter-flakes";
     text = builtins.readFile ./filter-flakes.sh;
-    checkPhase = "";
     runtimeInputs = [
       filter-flake
+      findutils
     ];
   };
   get-registry-flakes = writeShellApplication {
     name = "get-registry-flakes";
     text = builtins.readFile ./get-registry-flakes.sh;
-    checkPhase = "";
   };
 in
 writeShellApplication {
@@ -38,10 +37,9 @@ writeShellApplication {
     replacements = {
       help = ./help;
       flakeCompat = inputs.flake-compat;
-      isDarwin = if stdenvNoCC.isDarwin then "true" else "false";
+      isDarwin = if stdenvNoCC.hostPlatform.isDarwin then "true" else "false";
     };
   };
-  checkPhase = "";
   runtimeInputs = [
     gum
     filter-flakes

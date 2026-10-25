@@ -19,31 +19,21 @@ help_root="@help@"
 
 text_reset="\e[m"
 text_bold="\e[1m"
+# Used by the sourced help pages.
+# shellcheck disable=SC2034
 text_dim="\e[2m"
-text_italic="\e[3m"
+# Used by the sourced help pages.
+# shellcheck disable=SC2034
 text_underline="\e[4m"
-text_blink="\e[5m"
-text_highlight="\e[7m"
-text_hidden="\e[8m"
-text_strike="\e[9m"
 
 text_fg_red="\e[38;5;1m"
-text_fg_green="\e[38;5;2m"
 text_fg_yellow="\e[38;5;3m"
 text_fg_blue="\e[38;5;4m"
-text_fg_magenta="\e[38;5;5m"
-text_fg_cyan="\e[38;5;6m"
 text_fg_white="\e[38;5;7m"
 text_fg_dim="\e[38;5;8m"
 
 text_bg_red="\e[48;5;1m"
-text_bg_green="\e[48;5;2m"
-text_bg_yellow="\e[48;5;3m"
-text_bg_blue="\e[48;5;4m"
 text_bg_magenta="\e[48;5;5m"
-text_bg_cyan="\e[48;5;6m"
-text_bg_white="\e[48;5;7m"
-text_bg_dim="\e[48;5;8m"
 
 # Usage: log_info <message>
 log_info() {
@@ -76,10 +66,10 @@ log_error() {
 log_fatal() {
 	echo -e "${text_fg_white}${text_bg_red}fatal${text_reset} $1"
 
-	if [ -z ${2:-} ]; then
+	if [ -z "${2:-}" ]; then
 		exit 1
 	else
-		exit $2
+		exit "$2"
 	fi
 }
 
@@ -115,8 +105,7 @@ missing_opt_value() {
 	log_fatal "Option $1 requires a value"
 }
 
-# shellcheck disable=SC2154
-while [[ $# > 0 ]]; do
+while [[ $# -gt 0 ]]; do
 	case "$1" in
 		-h|--help)
 			opt_help=true
@@ -127,8 +116,8 @@ while [[ $# > 0 ]]; do
 			shift
 			;;
 		-t|--template)
-			if [ -z ${2:-} ]; then
-				missing_opt_value $1
+			if [ -z "${2:-}" ]; then
+				missing_opt_value "$1"
 			fi
 
 			opt_template="$2"
@@ -150,7 +139,7 @@ while [[ $# > 0 ]]; do
 			shift
 			break
 			;;
-		-*|--*)
+		-*)
 			echo "Unknown option $1"
 			exit 1
 			;;
@@ -161,16 +150,16 @@ while [[ $# > 0 ]]; do
 	esac
 done
 
-passthrough_args=($@)
-show_trace=""
-all_systems=""
+passthrough_args=("$@")
+show_trace=()
+all_systems=()
 
 if [[ "${opt_show_trace}" == true ]]; then
-	show_trace="--show-trace"
+	show_trace=(--show-trace)
 fi
 
 if [[ "${opt_all_systems}" == true ]]; then
-	all_systems="--all-systems"
+	all_systems=(--all-systems)
 fi
 
 #==============================#
@@ -179,18 +168,22 @@ fi
 
 # Usage: split <string> <delimiter>
 split() {
-	IFS=$'\n' read -d "" -ra arr <<< "${1//$2/$'\n'}"
-	printf '%s\n' "${arr[@]}"
+	# Delimiters are literal; callers consume one value per line.
+	if [[ -n $1 ]]; then
+		printf '%s\n' "${1//"$2"/$'\n'}"
+	fi
 }
 
-# Usage: lstrip <string> <pattern>
+# Usage: lstrip <string> <prefix>
 lstrip() {
-	printf '%s\n' "${1##$2}"
+	printf '%s\n' "${1##"$2"}"
 }
 
 # Usage: show_help <path>
 show_help() {
 	log_debug "Showing help: ${text_bold}$1${text_reset}"
+	# The help path is substituted by Nix at build time.
+	# shellcheck source=/dev/null
 	source "${help_root}/$1.sh"
 }
 
@@ -218,71 +211,58 @@ get_flake_attributes() {
 							builtins.attrNames (flake.\"$1\" or {});
 					names = builtins.map (output: \"$2#\" + output) outputs;
 			in
-			builtins.concatStringsSep \" \" names
+			builtins.concatStringsSep \"\\n\" names
 		" 2>/dev/null)
 		set -e
 
-		echo "$outputs"
+		if [[ -n $outputs ]]; then
+			printf '%s\n' "$outputs"
+		fi
 }
 
-# Usage: replace_each <pattern> <text> <data>
+# Usage: replace_each <prefix> <replacement> [items...]
 replace_each() {
-	local results=()
-
-	for item in $3; do
-		if [[ "$item" == $1* ]]; then
-			results+=("$2$(lstrip $item $1)")
+	local prefix=$1 replacement=$2 item
+	shift 2
+	for item in "$@"; do
+		if [[ "$item" == "$prefix"* ]]; then
+			printf '%s\n' "$replacement${item#"$prefix"}"
 		else
-			results+=("$item")
+			printf '%s\n' "$item"
 		fi
 	done
-
-	echo "${results[*]}"
-}
-
-# Usage: prefix_each <prefix> <data>
-prefix_each() {
-	local results=()
-
-	for item in $2; do
-		results+=("$1 $item")
-	done
-
-	echo "${results[*]}"
 }
 
 # Usage: join_by <delimiter> <data> <data> [...<data>]
 join_by() {
-  local d=${1-} f=${2-}
-  if shift 2; then
+  if [[ $# -gt 1 ]]; then
+    local d=$1 f=$2
+    shift 2
     printf %s "$f" "${@/#/$d}"
   fi
 }
 
-# Usage: privileged <command>
+# Usage: privileged <command> [args...]
 privileged() {
-	cmd="$@"
 	if command -v sudo >/dev/null; then
-		log_debug "sudo $cmd"
-		sudo $cmd
+		log_debug "sudo $*"
+		sudo "$@"
 	elif command -v doas >/dev/null; then
-		log_debug "doas $cmd"
-		doas $cmd
+		log_debug "doas $*"
+		doas "$@"
 	else
 		log_warn "Could not find ${text_bold}sudo${text_reset} or ${text_bold}doas${text_reset}. Executing without privileges."
-		log_debug "$cmd"
-		eval "$cmd"
+		log_debug "$*"
+		"$@"
 	fi
 }
 
-# Usage: system-rebuild [...args]
+# Usage: system-rebuild [args...]
 system-rebuild() {
 	if [[ "$is_darwin" == true ]]; then
-		cmd="darwin-rebuild $@"
-		$cmd
+		darwin-rebuild "$@"
 	else
-		cmd="nixos-rebuild $@"
-		privileged $cmd
+		privileged nixos-rebuild "$@"
 	fi
 }
 
@@ -322,44 +302,51 @@ flake_new() {
 	fi
 
 	if [[ ${opt_pick} == true ]]; then
-		local registry_flakes=($(gum spin \
+		local registry_flakes
+		mapfile -t registry_flakes < <(gum spin \
 			--title "Getting flakes from registry" \
 			--spinner.foreground="4" \
 			--show-output \
 			-- get-registry-flakes \
-		))
+		)
 
-		local template_flakes=($(gum spin \
+		local template_flakes
+		mapfile -t template_flakes < <(gum spin \
 			--title "Finding templates" \
 			--spinner.foreground="4" \
 			--show-output \
-			-- filter-flakes templates "${registry_flakes[*]}" \
-		))
+			-- filter-flakes templates "${registry_flakes[@]}" \
+		)
 
 		log_debug "found ${#template_flakes[@]} template flakes"
 
 		local template_choices=()
 
-		template_choices+=($(get_flake_attributes templates "github:NixOS/templates"))
-		template_choices+=($(get_flake_attributes templates "github:snowfallorg/templates"))
+		local additional_choices
+		mapfile -t additional_choices < <(get_flake_attributes templates "github:NixOS/templates")
+		template_choices+=("${additional_choices[@]}")
+		mapfile -t additional_choices < <(get_flake_attributes templates "github:snowfallorg/templates")
+		template_choices+=("${additional_choices[@]}")
 
-		for flake in ${template_flakes[*]}; do
+		for flake in "${template_flakes[@]}"; do
 			if [ "$flake" == "github:NixOS/templates" ] || [ "$flake" == "github:snowfallorg/templates" ]; then
 				continue
 			fi
 
-			template_choices+=($(get_flake_attributes templates "$flake"))
+			mapfile -t additional_choices < <(get_flake_attributes templates "$flake")
+			template_choices+=("${additional_choices[@]}")
 		done
 
 		log_debug "found ${#template_choices[@]} templates"
 
 		log_info "Select a template:"
-		local template=$(gum choose \
+		local template
+		template=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${template_choices[*]} \
+			"${template_choices[@]}" \
 		)
 
 		if [[ -z ${template} ]]; then
@@ -369,14 +356,14 @@ flake_new() {
 		rewrite_line "$(log_info "Select a template: ${text_fg_blue}${template}${text_reset}")"
 		
 		log_info "Creating new flake ${positional_args[1]} from template ${template}"
-		nix flake new "${positional_args[1]}" --template "${template}" ${show_trace}
+		nix flake new "${positional_args[1]}" --template "${template}" "${show_trace[@]}"
 	else
 		if [[ -z ${opt_template} ]]; then
 			log_info "Creating new flake ${positional_args[1]}"
-			nix flake new "${positional_args[1]}" ${show_trace}
+			nix flake new "${positional_args[1]}" "${show_trace[@]}"
 		else
 			log_info "Creating new flake ${positional_args[1]} from template ${opt_template}"
-			nix flake new "${positional_args[1]}" --template "${opt_template}" ${show_trace}
+			nix flake new "${positional_args[1]}" --template "${opt_template}" "${show_trace[@]}"
 		fi
 	fi
 }
@@ -387,49 +374,56 @@ flake_init() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 1 ]]; then
+	if [[ ${#positional_args[@]} -gt 1 ]]; then
 		log_fatal "${text_bold}flake init${text_reset} received too many positional arguments."
 	fi
 
 	if [[ ${opt_pick} == true ]]; then
-		local registry_flakes=($(gum spin \
+		local registry_flakes
+		mapfile -t registry_flakes < <(gum spin \
 			--title "Getting flakes from registry" \
 			--spinner.foreground="4" \
 			--show-output \
 			-- get-registry-flakes \
-		))
+		)
 
-		local template_flakes=($(gum spin \
+		local template_flakes
+		mapfile -t template_flakes < <(gum spin \
 			--title "Finding templates" \
 			--spinner.foreground="4" \
 			--show-output \
-			-- filter-flakes templates "${registry_flakes[*]}" \
-		))
+			-- filter-flakes templates "${registry_flakes[@]}" \
+		)
 
 		log_debug "found ${#template_flakes[@]} template flakes"
 
 		local template_choices=()
 
-		template_choices+=($(get_flake_attributes templates "github:snowfallorg/templates"))
-		template_choices+=($(get_flake_attributes templates "github:NixOS/templates"))
+		local additional_choices
+		mapfile -t additional_choices < <(get_flake_attributes templates "github:snowfallorg/templates")
+		template_choices+=("${additional_choices[@]}")
+		mapfile -t additional_choices < <(get_flake_attributes templates "github:NixOS/templates")
+		template_choices+=("${additional_choices[@]}")
 
-		for flake in ${template_flakes[*]}; do
+		for flake in "${template_flakes[@]}"; do
 			if [ "$flake" == "github:NixOS/templates" ] || [ "$flake" == "github:snowfallorg/templates" ]; then
 				continue
 			fi
 
-			template_choices+=($(get_flake_attributes templates "$flake"))
+			mapfile -t additional_choices < <(get_flake_attributes templates "$flake")
+			template_choices+=("${additional_choices[@]}")
 		done
 
 		log_debug "found ${#template_choices[@]} templates"
 
 		log_info "Select a template:"
-		local template=$(gum choose \
+		local template
+		template=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${template_choices[*]} \
+			"${template_choices[@]}" \
 		)
 
 		if [[ -z ${template} ]]; then
@@ -439,14 +433,14 @@ flake_init() {
 		rewrite_line "$(log_info "Select a template: ${text_fg_blue}${template}${text_reset}")"
 		
 		log_info "Creating new flake from template ${template}"
-		nix flake init --template "${template}" ${show_trace}
+		nix flake init --template "${template}" "${show_trace[@]}"
 	else
 		if [[ -z ${opt_template} ]]; then
 			log_info "Creating new flake"
 			nix flake init
 		else
 			log_info "Creating new flake from template ${opt_template}"
-			nix flake init --template "${opt_template}" ${show_trace}
+			nix flake init --template "${opt_template}" "${show_trace[@]}"
 		fi
 	fi
 }
@@ -457,7 +451,7 @@ flake_switch() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 2 ]]; then
+	if [[ ${#positional_args[@]} -gt 2 ]]; then
 		log_fatal "${text_bold}flake switch${text_reset} received too many positional arguments."
 	fi
 
@@ -479,20 +473,23 @@ flake_switch() {
 			target="darwin"
 		fi
 
-		local raw_systems_choices=($(get_flake_attributes "${target}Configurations" "$flake_uri"))
-		local systems_choices=($(replace_each "path:$(pwd)" "." "${raw_systems_choices[*]}"))
+		local raw_systems_choices
+		mapfile -t raw_systems_choices < <(get_flake_attributes "${target}Configurations" "$flake_uri")
+		local systems_choices
+		mapfile -t systems_choices < <(replace_each "path:$(pwd)" "." "${raw_systems_choices[@]}")
 
 		if [[ ${#systems_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any ${target} systems in flake: ${flake_uri}"
 		fi
 
 		log_info "Select a system:"
-		local system=$(gum choose \
+		local system
+		system=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${systems_choices[*]} \
+			"${systems_choices[@]}" \
 		)
 
 		if [[ -z ${system} ]]; then
@@ -512,7 +509,7 @@ flake_switch() {
 
 			if [[ "$system_name" == *:* ]] || [[ "$system_name" == *#* ]]; then
 				log_info "Switching system configuration to ${system_name}"
-				system-rebuild switch --flake $system_name
+				system-rebuild switch --flake "$system_name"
 			else
 				require_flake_nix
 				log_info "Switching system configuration to .#${system_name}"
@@ -528,7 +525,7 @@ flake_test() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 2 ]]; then
+	if [[ ${#positional_args[@]} -gt 2 ]]; then
 		log_fatal "${text_bold}flake test${text_reset} received too many positional arguments."
 	fi
 
@@ -550,20 +547,23 @@ flake_test() {
 			target="darwin"
 		fi
 
-		local raw_systems_choices=($(get_flake_attributes "${target}Configurations" "$flake_uri"))
-		local systems_choices=($(replace_each "path:$(pwd)" "." "${raw_systems_choices[*]}"))
+		local raw_systems_choices
+		mapfile -t raw_systems_choices < <(get_flake_attributes "${target}Configurations" "$flake_uri")
+		local systems_choices
+		mapfile -t systems_choices < <(replace_each "path:$(pwd)" "." "${raw_systems_choices[@]}")
 
 		if [[ ${#systems_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any ${target} systems in flake: ${flake_uri}"
 		fi
 
 		log_info "Select a system:"
-		local system=$(gum choose \
+		local system
+		system=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${systems_choices[*]} \
+			"${systems_choices[@]}" \
 		)
 
 		if [[ -z ${system} ]]; then
@@ -583,7 +583,7 @@ flake_test() {
 
 			if [[ "$system_name" == *:* ]] || [[ "$system_name" == *#* ]]; then
 				log_info "Testing system configuration ${system_name}"
-				system-rebuild test --flake $system_name
+				system-rebuild test --flake "$system_name"
 			else
 				require_flake_nix
 				log_info "Testing system configuration .#${system_name}"
@@ -596,7 +596,6 @@ flake_test() {
 flake_boot() {
 	if [[ $is_darwin == true ]]; then
 		log_fatal "${text_bold}flake boot${text_reset} is only compatible with NixOS."
-		exit 1
 	fi
 
 	if [[ $opt_help == true ]]; then
@@ -604,7 +603,7 @@ flake_boot() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 2 ]]; then
+	if [[ ${#positional_args[@]} -gt 2 ]]; then
 		log_fatal "${text_bold}flake boot${text_reset} received too many positional arguments."
 	fi
 
@@ -626,20 +625,23 @@ flake_boot() {
 			target="darwin"
 		fi
 
-		local raw_systems_choices=($(get_flake_attributes "${target}Configurations" "$flake_uri"))
-		local systems_choices=($(replace_each "path:$(pwd)" "." "${raw_systems_choices[*]}"))
+		local raw_systems_choices
+		mapfile -t raw_systems_choices < <(get_flake_attributes "${target}Configurations" "$flake_uri")
+		local systems_choices
+		mapfile -t systems_choices < <(replace_each "path:$(pwd)" "." "${raw_systems_choices[@]}")
 
 		if [[ ${#systems_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any ${target} systems in flake: ${flake_uri}"
 		fi
 
 		log_info "Select a system:"
-		local system=$(gum choose \
+		local system
+		system=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${systems_choices[*]} \
+			"${systems_choices[@]}" \
 		)
 
 		if [[ -z ${system} ]]; then
@@ -659,7 +661,7 @@ flake_boot() {
 
 			if [[ "$system_name" == *:* ]] || [[ "$system_name" == *#* ]]; then
 				log_info "Updating boot system configuration ${system_name}"
-				system-rebuild boot --flake $system_name
+				system-rebuild boot --flake "$system_name"
 			else
 				require_flake_nix
 				log_info "Updating boot system configuration .#${system_name}"
@@ -675,7 +677,7 @@ flake_show() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 2 ]]; then
+	if [[ ${#positional_args[@]} -gt 2 ]]; then
 		log_fatal "${text_bold}flake show${text_reset} received too many positional arguments."
 	fi
 
@@ -685,7 +687,7 @@ flake_show() {
 		nix flake show .#
 	else
 		log_info "Showing flake ${positional_args[1]}"
-		nix flake show ${positional_args[1]}
+		nix flake show "${positional_args[1]}"
 	fi
 }
 
@@ -695,7 +697,7 @@ flake_build() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 2 ]]; then
+	if [[ ${#positional_args[@]} -gt 2 ]]; then
 		log_fatal "${text_bold}flake build${text_reset} received too many positional arguments."
 	fi
 
@@ -711,20 +713,23 @@ flake_build() {
 			log_fatal "${text_bold}flake build --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
-		local raw_packages_choices=($(get_flake_attributes packages "$flake_uri"))
-		local packages_choices=($(replace_each "path:$(pwd)" "." "${raw_packages_choices[*]}"))
+		local raw_packages_choices
+		mapfile -t raw_packages_choices < <(get_flake_attributes packages "$flake_uri")
+		local packages_choices
+		mapfile -t packages_choices < <(replace_each "path:$(pwd)" "." "${raw_packages_choices[@]}")
 
 		if [[ ${#packages_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any packages in flake: ${flake_uri}"
 		fi
 
 		log_info "Select a package:"
-		local package=$(gum choose \
+		local package
+		package=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${packages_choices[*]} \
+			"${packages_choices[@]}" \
 		)
 
 		if [[ -z ${package} ]]; then
@@ -734,22 +739,22 @@ flake_build() {
 		rewrite_line "$(log_info "Select a package: ${text_fg_blue}${package}${text_reset}")"
 
 		log_info "Building package ${package}"
-		nix build "${package}" ${show_trace}
+		nix build "${package}" "${show_trace[@]}"
 	else
 		if [[ ${#positional_args[@]} == 1 ]]; then
 			require_flake_nix
 			log_info "Building flake .#"
-			nix build ".#" ${show_trace}
+			nix build ".#" "${show_trace[@]}"
 		else
 			local package_name=${positional_args[1]}
 
 			if [[ "$package_name" == *:* ]] || [[ "$package_name" == *#* ]]; then
 				log_info "Building package ${package_name}"
-				nix build "$package_name" ${show_trace}
+				nix build "$package_name" "${show_trace[@]}"
 			else
 				require_flake_nix
 				log_info "Building package .#${package_name}"
-				nix build ".#${package_name}" ${show_trace}
+				nix build ".#${package_name}" "${show_trace[@]}"
 			fi
 		fi
 	fi
@@ -761,11 +766,12 @@ flake_build_system() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 2 ]]; then
+	if [[ ${#positional_args[@]} -gt 2 ]]; then
 		log_fatal "${text_bold}flake ${positional_args[0]}${text_reset} received too many positional arguments."
 	fi
 
-	local target=$(lstrip "${positional_args[0]}" "build-")
+	local target
+	target=$(lstrip "${positional_args[0]}" "build-")
 
 	log_debug "Building target system: ${target}"
 
@@ -791,20 +797,23 @@ flake_build_system() {
 			log_fatal "${text_bold}flake ${positional_args[0]} --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
-		local raw_systems_choices=($(get_flake_attributes "${target}Configurations" "$flake_uri"))
-		local systems_choices=($(replace_each "path:$(pwd)#" ".#${target}Configurations." "${raw_systems_choices[*]}"))
+		local raw_systems_choices
+		mapfile -t raw_systems_choices < <(get_flake_attributes "${target}Configurations" "$flake_uri")
+		local systems_choices
+		mapfile -t systems_choices < <(replace_each "path:$(pwd)#" ".#${target}Configurations." "${raw_systems_choices[@]}")
 
 		if [[ ${#systems_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any ${target} systems in flake: ${flake_uri}"
 		fi
 
 		log_info "Select a system:"
-		local system=$(gum choose \
+		local system
+		system=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${systems_choices[*]} \
+			"${systems_choices[@]}" \
 		)
 
 		if [[ -z ${system} ]]; then
@@ -816,36 +825,36 @@ flake_build_system() {
 		if [[ "${positional_args[0]}" == "build-nixos-vm" ]]; then
 			local system_parts=()
 
-			system_parts=($(split "$system" "nixosConfigurations."))
+			mapfile -t system_parts < <(split "$system" "nixosConfigurations.")
 			system="${system_parts[0]}${system_parts[1]:-}"
 
 			log_info "Building NixOS VM ${system}"
-			system-rebuild build-vm --flake "$system" ${show_trace}
+			system-rebuild build-vm --flake "$system" "${show_trace[@]}"
 		elif [[ "${target}" == "nixos" ]] || [[ "${target}" == "darwin" ]]; then
 			local system_parts=()
 
-			system_parts=($(split "$system" "nixosConfigurations."))
+			mapfile -t system_parts < <(split "$system" "nixosConfigurations.")
 			system="${system_parts[0]}${system_parts[1]:-}"
 
-			system_parts=($(split "$system" "darwinConfigurations."))
+			mapfile -t system_parts < <(split "$system" "darwinConfigurations.")
 			system="${system_parts[0]}${system_parts[1]:-}"
 
 			log_info "Building system ${system}"
-			system-rebuild build --flake "$system" ${show_trace}
+			system-rebuild build --flake "$system" "${show_trace[@]}"
 		else
 			log_info "Building ${system}"
-			nix build "$system" ${show_trace}
+			nix build "$system" "${show_trace[@]}"
 		fi
 	else
 		if [[ ${#positional_args[@]} == 1 ]]; then
 			if [[ "${positional_args[0]}" == "build-nixos-vm" ]]; then
 				require_flake_nix
 				log_info "Building NixOS VM .#"
-				system-rebuild build-vm --flake ".#" ${show_trace}
+				system-rebuild build-vm --flake ".#" "${show_trace[@]}"
 			elif [[ "${target}" == "nixos" ]] || [[ "${target}" == "darwin" ]]; then
 				require_flake_nix
 				log_info "Building system .#"
-				system-rebuild build --flake ".#" ${show_trace}
+				system-rebuild build --flake ".#" "${show_trace[@]}"
 			else
 				log_fatal "${text_bold}flake ${positional_args[0]}${text_reset} called without a name"
 			fi
@@ -855,18 +864,19 @@ flake_build_system() {
 			if [[ "$system_name" == *:* ]] || [[ "$system_name" == *#* ]]; then
 				if [[ "${positional_args[0]}" == "build-nixos-vm" ]]; then
 					log_info "Building NixOS VM ${system_name}"
-					system-rebuild build-vm --flake "$system_name" ${show_trace}
+					system-rebuild build-vm --flake "$system_name" "${show_trace[@]}"
 				elif [[ "${target}" == "nixos" ]] || [[ "${target}" == "darwin" ]]; then
 					log_info "Building system ${system_name}"
-					system-rebuild build --flake "$system_name" ${show_trace}
+					system-rebuild build --flake "$system_name" "${show_trace[@]}"
 				else
-					local output_name_parts=($(split "$system_name" "#"))
+					local output_name_parts
+					mapfile -t output_name_parts < <(split "$system_name" "#")
 					local upstream_flake_uri=${output_name_parts[0]}
 					local output_name=${output_name_parts[1]:-}
 
 					if [[ -n ${output_name} ]]; then
 						log_info "Building ${upstream_flake_uri}#${target}Configurations.${output_name}"
-						nix build "${upstream_flake_uri}#${target}Configurations.${output_name}" ${show_trace}
+						nix build "${upstream_flake_uri}#${target}Configurations.${output_name}" "${show_trace[@]}"
 					else
 						log_fatal "${text_bold}flake ${positional_args[0]}${text_reset} called without a name"
 					fi
@@ -875,15 +885,15 @@ flake_build_system() {
 				if [[ "${positional_args[0]}" == "build-nixos-vm" ]]; then
 					require_flake_nix
 					log_info "Building NixOS VM .#${system_name}"
-					system-rebuild build-vm --flake ".#${system_name}" ${show_trace}
+					system-rebuild build-vm --flake ".#${system_name}" "${show_trace[@]}"
 				elif [[ "${target}" == "nixos" ]] || [[ "${target}" == "darwin" ]]; then
 					require_flake_nix
 					log_info "Building system .#${system_name}"
-					system-rebuild build --flake ".#${system_name}" ${show_trace}
+					system-rebuild build --flake ".#${system_name}" "${show_trace[@]}"
 				else
 					require_flake_nix
 					log_info "Building .#${target}Configurations.${system_name}"
-					nix build ".#${target}Configurations.${system_name}" ${show_trace}
+					nix build ".#${target}Configurations.${system_name}" "${show_trace[@]}"
 				fi
 			fi
 		fi
@@ -896,7 +906,7 @@ flake_dev() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 2 ]]; then
+	if [[ ${#positional_args[@]} -gt 2 ]]; then
 		log_fatal "${text_bold}flake dev${text_reset} received too many positional arguments."
 	fi
 
@@ -912,20 +922,23 @@ flake_dev() {
 			log_fatal "${text_bold}flake dev --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
-		local raw_shells_choices=($(get_flake_attributes devShells "$flake_uri"))
-		local shells_choices=($(replace_each "path:$(pwd)" "." "${raw_shells_choices[*]}"))
+		local raw_shells_choices
+		mapfile -t raw_shells_choices < <(get_flake_attributes devShells "$flake_uri")
+		local shells_choices
+		mapfile -t shells_choices < <(replace_each "path:$(pwd)" "." "${raw_shells_choices[@]}")
 
 		if [[ ${#shells_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any shells in flake: ${flake_uri}"
 		fi
 
 		log_info "Select a shell:"
-		local shell=$(gum choose \
+		local shell
+		shell=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${shells_choices[*]} \
+			"${shells_choices[@]}" \
 		)
 
 		if [[ -z ${shell} ]]; then
@@ -935,22 +948,22 @@ flake_dev() {
 		rewrite_line "$(log_info "Select a shell: ${text_fg_blue}${shell}${text_reset}")"
 
 		log_info "Running shell ${shell}"
-		nix develop "${shell}" ${show_trace}
+		nix develop "${shell}" "${show_trace[@]}"
 	else
 		if [[ ${#positional_args[@]} == 1 ]]; then
 			require_flake_nix
 			log_info "Running shell .#"
-			nix develop ".#" ${show_trace}
+			nix develop ".#" "${show_trace[@]}"
 		else
 			local shell_name=${positional_args[1]}
 
 			if [[ "$shell_name" == *:* ]] || [[ "$shell_name" == *#* ]]; then
 				log_info "Running shell ${shell_name}"
-				nix develop "$shell_name" ${show_trace}
+				nix develop "$shell_name" "${show_trace[@]}"
 			else
 				require_flake_nix
 				log_info "Running shell .#${shell_name}"
-				nix develop ".#${shell_name}" ${show_trace}
+				nix develop ".#${shell_name}" "${show_trace[@]}"
 			fi
 		fi
 	fi
@@ -962,7 +975,7 @@ flake_run() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 2 ]]; then
+	if [[ ${#positional_args[@]} -gt 2 ]]; then
 		log_fatal "${text_bold}flake run${text_reset} received too many positional arguments."
 	fi
 
@@ -978,44 +991,47 @@ flake_run() {
 			log_fatal "${text_bold}flake run --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
-		local raw_apps_choices=($(get_flake_attributes apps "$flake_uri"))
-		local apps_choices=($(replace_each "path:$(pwd)" "." "${raw_apps_choices[*]}"))
+		local raw_apps_choices
+		mapfile -t raw_apps_choices < <(get_flake_attributes apps "$flake_uri")
+		local apps_choices
+		mapfile -t apps_choices < <(replace_each "path:$(pwd)" "." "${raw_apps_choices[@]}")
 
 		if [[ ${#apps_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any apps in flake: ${flake_uri}"
 		fi
 
 		log_info "Select an app:"
-		local app=$(gum choose \
+		local app
+		app=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${apps_choices[*]} \
+			"${apps_choices[@]}" \
 		)
 
 		if [[ -z ${app} ]]; then
 			log_fatal "No app selected"
 		fi
 
-		rewrite_line "$(log_info "Select an app: ${text_fg_blue}${shell}${text_reset}")"
+		rewrite_line "$(log_info "Select an app: ${text_fg_blue}${app}${text_reset}")"
 
-		nix run "${app}" ${show_trace} -- ${passthrough_args[*]}
+		nix run "${app}" "${show_trace[@]}" -- "${passthrough_args[@]}"
 	else
 		if [[ ${#positional_args[@]} == 1 ]]; then
 			require_flake_nix
 			log_info "Running app .#"
-			nix run ".#" ${show_trace} -- ${passthrough_args[*]}
+			nix run ".#" "${show_trace[@]}" -- "${passthrough_args[@]}"
 		else
 			local shell_name=${positional_args[1]}
 
 			if [[ "$shell_name" == *:* ]] || [[ "$shell_name" == *#* ]]; then
 				log_info "Running app ${shell_name}"
-				nix run "$shell_name" ${show_trace} -- ${passthrough_args[*]}
+				nix run "$shell_name" "${show_trace[@]}" -- "${passthrough_args[@]}"
 			else
 				require_flake_nix
 				log_info "Running app .#${shell_name}"
-				nix run ".#${shell_name}" ${show_trace} -- ${passthrough_args[*]}
+				nix run ".#${shell_name}" "${show_trace[@]}" -- "${passthrough_args[@]}"
 			fi
 		fi
 	fi
@@ -1032,34 +1048,39 @@ flake_update() {
 	flake_uri="path:$(pwd)"
 
 	if [[ ${opt_pick} == true ]]; then
-		if [[ ${#positional_args[@]} > 1 ]]; then
+		if [[ ${#positional_args[@]} -gt 1 ]]; then
 			log_fatal "${text_bold}flake update --pick${text_reset} cannot be called with input names."
 		fi
 
-		local raw_inputs_choices=($(get_flake_attributes inputs "$flake_uri"))
-		local inputs_choices=($(replace_each "$flake_uri#" "" "${raw_inputs_choices[*]}"))
+		local raw_inputs_choices
+		mapfile -t raw_inputs_choices < <(get_flake_attributes inputs "$flake_uri")
+		local inputs_choices
+		mapfile -t inputs_choices < <(replace_each "$flake_uri#" "" "${raw_inputs_choices[@]}")
 
 		if [[ ${#inputs_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any inputs in flake: ${flake_uri}"
 		fi
 
 		log_info "Select inputs to update:"
-		local inputs=$(gum choose \
+		local selection
+		selection=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
 			--no-limit \
-			${inputs_choices[*]} \
+			"${inputs_choices[@]}" \
 		)
 
-		if [[ -z ${inputs} ]]; then
+		if [[ -z ${selection} ]]; then
 			log_fatal "No inputs selected"
 		fi
 
-		rewrite_line "$(log_info "Select inputs to update: ${text_fg_blue}${inputs//$'\n'/, }${text_reset}")"
+		rewrite_line "$(log_info "Select inputs to update: ${text_fg_blue}${selection//$'\n'/, }${text_reset}")"
 
-		nix flake update ${inputs[*]}
+		local inputs
+		mapfile -t inputs <<< "$selection"
+		nix flake update "${inputs[@]}"
 	else
 		if [[ ${#positional_args[@]} == 1 ]]; then
 			log_info "Updating flake .#"
@@ -1068,7 +1089,7 @@ flake_update() {
 			local inputs=("${positional_args[@]:1}")
 
 			log_info "Updating flake .# inputs: ${inputs[*]}"
-			nix flake update ${inputs[*]}
+			nix flake update "${inputs[@]}"
 		fi
 	fi
 }
@@ -1079,13 +1100,14 @@ flake_option() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 3 ]]; then
+	if [[ ${#positional_args[@]} -gt 3 ]]; then
 		log_fatal "${text_bold}flake option${text_reset} received too many positional arguments."
 	fi
 
 	if [[ $opt_pick == true ]]; then
 		local flake_uri=${positional_args[1]:-}
-		local flake_parts=($(split "$flake_uri" "#"))
+		local flake_parts
+		mapfile -t flake_parts < <(split "$flake_uri" "#")
 
 		local flake_target="${flake_parts[0]:-"$(pwd)"}"
 
@@ -1104,20 +1126,23 @@ flake_option() {
 			target="darwin"
 		fi
 
-		local raw_systems_choices=($(get_flake_attributes "${target}Configurations" "$flake_uri"))
-		local systems_choices=($(replace_each "path:$(pwd)" "." "${raw_systems_choices[*]}"))
+		local raw_systems_choices
+		mapfile -t raw_systems_choices < <(get_flake_attributes "${target}Configurations" "$flake_uri")
+		local systems_choices
+		mapfile -t systems_choices < <(replace_each "path:$(pwd)" "." "${raw_systems_choices[@]}")
 
 		if [[ ${#systems_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any ${target} systems in flake: ${flake_uri}"
 		fi
 
 		log_info "Select a system:"
-		local system=$(gum choose \
+		local system
+		system=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${systems_choices[*]} \
+			"${systems_choices[@]}" \
 		)
 
 		if [[ -z ${system} ]]; then
@@ -1126,41 +1151,45 @@ flake_option() {
 
 		rewrite_line "$(log_info "Select a system: ${text_fg_blue}${system}${text_reset}")"
 
-		local system_parts=($(split "${system}" "#"))
+		local system_parts
+		mapfile -t system_parts < <(split "${system}" "#")
 		local system_name="${system_parts[1]}"
 
 		local option_path=()
 
 		log_info "Select an option..."
 		while true; do
-			local current_option_path=$(join_by "." ${option_path[@]})
+			local current_option_path
+			current_option_path=$(join_by "." "${option_path[@]}")
 
-			local options_output=$(system_option "\"${flake_target}\"" "${system_name}" "${current_option_path}")
+			local options_output
+			options_output=$(system_option "\"${flake_target}\"" "${system_name}" "${current_option_path}")
 
 			if [[ "${options_output}" == "This attribute set contains:"* ]]; then
 				# Listing options
-				local options=(${options_output#*$'\n'})
+				local options
+				mapfile -t options <<< "${options_output#*$'\n'}"
 
 				local option=
 
 				if [[ "${current_option_path}" != "" ]]; then
 					rewrite_line "$(log_info "Select an option: ${text_fg_blue}${current_option_path}${text_reset}")"
-					local option=$(gum choose \
+					option=$(gum choose \
 						--height=15 \
 						--cursor.foreground="4" \
 						--item.foreground="7" \
 						--selected.foreground="4" \
 						"⬅️  Back" \
-						${options[*]} \
+						"${options[@]}" \
 					)
 				else
 					rewrite_line "$(log_info "Select an option...")"
-					local option=$(gum choose \
+					option=$(gum choose \
 						--height=15 \
 						--cursor.foreground="4" \
 						--item.foreground="7" \
 						--selected.foreground="4" \
-						${options[*]} \
+						"${options[@]}" \
 					)
 				fi
 
@@ -1170,7 +1199,7 @@ flake_option() {
 				fi
 
 				if [[ "${option}" == "⬅️  Back" ]]; then
-					option_path=(${option_path[@]::$((${#option_path[@]} - 1))})
+					option_path=("${option_path[@]::$((${#option_path[@]} - 1))}")
 				else
 					option_path+=("${option}")
 				fi
@@ -1180,7 +1209,7 @@ flake_option() {
 					--help.foreground="4" \
 					<<<"${current_option_path}"$'\n\n'"${options_output}"
 
-				option_path=(${option_path[@]::$((${#option_path[@]} - 1))})
+				option_path=("${option_path[@]::$((${#option_path[@]} - 1))}")
 			fi
 		done
 	else
@@ -1192,23 +1221,24 @@ flake_option() {
 			local system_name=${positional_args[1]:-""}
 
 			if [[ "$system_name" == *:* ]] || [[ "$system_name" == *#* ]]; then
-				local options=${positional_args[2]:-""}
+				local option_name=${positional_args[2]:-""}
 
-				local flake_parts=($(split "$system_name" "#"))
+				local flake_parts
+				mapfile -t flake_parts < <(split "$system_name" "#")
 
 				local flake_uri="${flake_parts[0]}"
 				local flake_hostname="${flake_parts[1]:-"$(hostname)"}"
 
 				log_info "Showing options for ${flake_uri}#${flake_hostname}"
 
-				system_option "\"${flake_uri}\"" "${flake_hostname}" "${options}"
+				system_option "\"${flake_uri}\"" "${flake_hostname}" "${option_name}"
 			else
 				require_flake_nix
 
 				if [[ ${#positional_args[@]} == 3 ]]; then
-					local options=${positional_args[2]:-""}
+					local option_name=${positional_args[2]:-""}
 					log_info "Showing options for .#$(hostname)"
-					system_option "$(pwd)" "${system_name}" "${options}"
+					system_option "$(pwd)" "${system_name}" "${option_name}"
 				else
 					log_info "Showing options for .#$(hostname)"
 					system_option "$(pwd)" "$(hostname)" "${system_name}"
@@ -1224,7 +1254,7 @@ flake_check() {
 		exit 0
 	fi
 
-	if [[ ${#positional_args[@]} > 2 ]]; then
+	if [[ ${#positional_args[@]} -gt 2 ]]; then
 		log_fatal "${text_bold}flake check${text_reset} received too many positional arguments."
 	fi
 
@@ -1240,20 +1270,23 @@ flake_check() {
 			log_fatal "${text_bold}flake check --pick${text_reset} called with invalid flake uri: $flake_uri"
 		fi
 
-		local raw_checks_choices=($(get_flake_attributes checks "$flake_uri"))
-		local checks_choices=($(replace_each "path:$(pwd)" "." "${raw_checks_choices[*]}"))
+		local raw_checks_choices
+		mapfile -t raw_checks_choices < <(get_flake_attributes checks "$flake_uri")
+		local checks_choices
+		mapfile -t checks_choices < <(replace_each "path:$(pwd)" "." "${raw_checks_choices[@]}")
 
 		if [[ ${#checks_choices[@]} == 0 ]]; then
 			log_fatal "Could not find any checks in flake: ${flake_uri}"
 		fi
 
 		log_info "Select a check:"
-		local check=$(gum choose \
+		local check
+		check=$(gum choose \
 			--height=15 \
 			--cursor.foreground="4" \
 			--item.foreground="7" \
 			--selected.foreground="4" \
-			${checks_choices[*]} \
+			"${checks_choices[@]}" \
 		)
 
 		if [[ -z ${check} ]]; then
@@ -1262,22 +1295,22 @@ flake_check() {
 
 		rewrite_line "$(log_info "Select a check: ${text_fg_blue}${check}${text_reset}")"
 
-		nix flake check "${check}" ${show_trace} ${all_systems}
+		nix flake check "${check}" "${show_trace[@]}" "${all_systems[@]}"
 	else
 		if [[ ${#positional_args[@]} == 1 ]]; then
 			require_flake_nix
 			log_info "Checking flake .#"
-			nix flake check ".#" ${show_trace} ${all_systems}
+			nix flake check ".#" "${show_trace[@]}" "${all_systems[@]}"
 		else
 			local check_name=${positional_args[1]}
 
 			if [[ "$check_name" == *:* ]] || [[ "$check_name" == *#* ]]; then
 				log_info "Checking flake ${check_name}"
-				nix flake check "$check_name" ${show_trace} ${all_systems}
+				nix flake check "$check_name" "${show_trace[@]}" "${all_systems[@]}"
 			else
 				require_flake_nix
 				log_info "Checking flake .#${check_name}"
-				nix flake check ".#${check_name}" ${show_trace} ${all_systems}
+				nix flake check ".#${check_name}" "${show_trace[@]}" "${all_systems[@]}"
 			fi
 		fi
 	fi
@@ -1287,7 +1320,7 @@ flake_check() {
 #          Execute             #
 #==============================#
 
-if [ -z "${positional_args:-}" ]; then
+if [[ ${#positional_args[@]} -eq 0 ]]; then
 	if [[ $opt_help == true ]]; then
 		show_help "flake"
 		exit 0
