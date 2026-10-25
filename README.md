@@ -17,6 +17,9 @@
 
 > Simplified Nix Flakes on the command line.
 
+This fork tracks current Snowfall Lib for compatibility with Nixpkgs 26.05.
+The upstream project is [snowfallorg/flake](https://github.com/snowfallorg/flake).
+
 ## Installation
 
 ### Nix Profile
@@ -24,7 +27,7 @@
 You can install this package imperatively with the following command.
 
 ```bash
-nix profile install github:snowfallorg/flake
+nix profile install github:OlaoluwaM/snowfall-flake
 ```
 
 ### Nix Configuration
@@ -36,8 +39,7 @@ You can install this package by adding it as an input to your Nix Flake.
 	description = "My system flake";
 
 	inputs = {
-		nixpkgs.url = "github:nixos/nixpkgs/nixos-22.05";
-		unstable.url = "github:nixos/nixpkgs/nixos-unstable";
+		nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
 		# Snowfall Lib is not required, but will make configuration easier for you.
 		snowfall-lib = {
@@ -46,9 +48,8 @@ You can install this package by adding it as an input to your Nix Flake.
 		};
 
 		snowfall-flake = {
-			url = "github:snowfallorg/flake";
-			# Flake requires some packages that aren't on 22.05, but are available on unstable.
-			inputs.nixpkgs.follows = "unstable";
+			url = "github:OlaoluwaM/snowfall-flake";
+			inputs.nixpkgs.follows = "nixpkgs";
 		};
 	};
 
@@ -59,7 +60,7 @@ You can install this package by adding it as an input to your Nix Flake.
 
 			overlays = with inputs; [
 				# Use the overlay provided by this flake.
-				snowfall-flake.overlay
+				snowfall-flake.overlays.default
 
 				# There is also a named overlay, though the output is the same.
 				snowfall-flake.overlays."package/flake"
