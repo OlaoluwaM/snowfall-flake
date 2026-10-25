@@ -401,3 +401,20 @@ EXAMPLES
   $ flake option github:jakehamilton/config --pick
 
 ```
+
+## Development checks
+
+Run `nix flake check` for ShellCheck and the CLI regression suite, then
+`nix build .#default` to build the packaged CLI. Package builds also run Bash
+syntax checks and ShellCheck for the CLI and its helpers.
+
+For a quick local pass with Bash 4 or newer, Python 3, ShellCheck, and GNU findutils installed:
+
+```bash
+shellcheck --shell=bash packages/flake/*.sh
+python3 tests/test_cli.py
+```
+
+The regression suite replaces Nix, Gum, and rebuild/privilege commands with
+local fakes. It checks argument handling without fetching flakes or changing
+system configurations. Interactive terminal behaviour still needs manual testing.
