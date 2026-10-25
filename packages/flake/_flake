@@ -1,0 +1,98 @@
+#compdef flake
+
+local context state state_descr line
+local -A opt_args
+local -a common pick template commands targets inputs
+local curcontext="$curcontext"
+
+# Arguments after -- belong to the invoked program, not this CLI.
+if (( ${words[(Ie)--]} && ${words[(Ie)--]} < CURRENT )); then
+  return 1
+fi
+
+common=(
+  '(-h --help)'{-h,--help}'[Show help]'
+  '--debug[Show debug messages]'
+  '--show-trace[Show a Nix evaluation trace on failure]'
+)
+pick=( '(-p --pick)'{-p,--pick}'[Select interactively]' )
+template=( '(-t --template)'{-t,--template}'[Use a template]:template flake:_files -/' )
+
+_arguments -C -A '-*' $common $pick $template \
+  '(-a --all-systems)'{-a,--all-systems}'[Check all platforms]' \
+  '1:command:->command' \
+  '*::argument:->args' && return 0
+
+case $state in
+  command)
+    commands=(
+      'new:Create a new flake directory'
+      'init:Initialize a flake in the current directory'
+      'dev:Start a development shell'
+      'run:Run an app'
+      'build:Build a package'
+      'switch:Switch system configuration'
+      'test:Test system configuration'
+      'boot:Update bootable generations'
+      'show:Show flake outputs'
+      'check:Run checks'
+      'update:Update flake inputs'
+      'option:Browse NixOS options'
+    )
+    targets=(
+      system nixos nixos-vm darwin amazon azure cloudstack do gce hyperv
+      install-iso install-iso-hyperv iso kexec kexec-bundle kubevirt lxc
+      lxc-metadata openstack proxmox qcow raw raw-efi sd-aarch64
+      sd-aarch64-installer vagrant-virtualbox virtualbox vm vm-bootloader
+      vm-nogui vmware
+    )
+    commands+=( ${targets/#/build-} )
+    _describe 'flake command' commands
+    ;;
+  args)
+    curcontext="${curcontext%:*:*}:flake-${line[1]}:"
+    case $line[1] in
+      update)
+        if (( ${+opt_args[-p]} || ${+opt_args[--pick]} )); then
+          _arguments $common
+          return
+        fi
+        _arguments $common \
+          '(-p --pick *)'{-p,--pick}'[Select inputs interactively]' \
+          '(-p --pick)*:input:->input'
+        if [[ $state == input && -f flake.nix && -r flake.lock ]]; then
+          # Read only direct inputs, including follows entries. Never evaluate
+          # Nix, fetch sources, or rewrite the lock file during completion.
+          inputs=( "${(@f)$("@jq@" -r '(.nodes[.root].inputs // {}) | keys[]' flake.lock 2>/dev/null)}" )
+          inputs=( ${inputs:#} )
+          _wanted inputs context 'flake input' compadd -F line -a inputs
+        fi
+        ;;
+      new)
+        _arguments $common $pick $template '1:directory:_files -/'
+        ;;
+      init)
+        _arguments $common $pick $template
+        ;;
+      check)
+        if (( ${+opt_args[-p]} || ${+opt_args[--pick]} || ${+opt_args[-a]} || ${+opt_args[--all-systems]} )); then
+          _arguments $common '1:flake:_files -/'
+          return
+        fi
+        _arguments $common \
+          '(-p --pick -a --all-systems)'{-p,--pick}'[Select a check interactively]' \
+          '(-a --all-systems -p --pick)'{-a,--all-systems}'[Check all platforms]' \
+          '1:check or flake:_files -/'
+        ;;
+      show)
+        _arguments $common '1:flake:_files -/'
+        ;;
+      option)
+        _arguments $common $pick '1:host or flake:_files -/' '2:option:'
+        ;;
+      dev|run|build|switch|test|boot|build-*)
+        _arguments $common $pick '1:name or flake:_files -/'
+        ;;
+    esac
+    ;;
+esac

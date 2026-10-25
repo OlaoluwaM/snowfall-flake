@@ -35,7 +35,7 @@ let
     text = builtins.readFile ./get-registry-flakes.sh;
   };
 in
-writeShellApplication {
+(writeShellApplication {
   name = "flake";
   text = substitute {
     src = ./flake.sh;
@@ -54,4 +54,14 @@ writeShellApplication {
     get-registry-flakes
     nixos-option
   ];
-}
+}).overrideAttrs
+  (old: {
+    buildCommand = old.buildCommand + ''
+      install -Dm644 ${
+        replaceVarsWith {
+          src = ./_flake;
+          replacements.jq = "${jq}/bin/jq";
+        }
+      } "$out/share/zsh/site-functions/_flake"
+    '';
+  })

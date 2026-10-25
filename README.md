@@ -402,16 +402,43 @@ EXAMPLES
 
 ```
 
+## Zsh completion
+
+The package installs a Zsh completion for commands, command-specific flags, and
+direct input names from the current directory's `flake.lock`. Input completion
+includes `follows` aliases and excludes inputs already on the command line.
+It reads the lock file without evaluating Nix or accessing the network.
+
+With Zsh completion enabled (for example, Home Manager's
+`programs.zsh.enableCompletion = true`), install the package and start a new
+shell. Try `flake <Tab>`, `flake update --<Tab>`, or `flake update <Tab>`.
+Missing or invalid lock files produce no input suggestions.
+
+For a temporary package build that is not installed in your profile, load it
+in the current Zsh session with:
+
+```zsh
+fpath=("$PWD/result/share/zsh/site-functions" $fpath)
+autoload -Uz compinit
+compinit
+```
+
+Package, app, host, and option names remain available through `--pick`; completion
+does not evaluate these outputs. Arguments after `--` are left to the invoked
+program and receive no Snowfall completion.
+
 ## Development checks
 
-Run `nix flake check` for ShellCheck and the CLI regression suite, then
-`nix build .#default` to build the packaged CLI. Package builds also run Bash
+Run `nix flake check` for ShellCheck, Zsh syntax checks, and the CLI regression
+suite, then `nix build .#default` to build the packaged CLI. Package builds also run Bash
 syntax checks and ShellCheck for the CLI and its helpers.
 
-For a quick local pass with Bash 4 or newer, Python 3, ShellCheck, jq, and GNU findutils installed:
+For a quick local pass with Bash 4 or newer, Zsh, Python 3, ShellCheck, jq, and GNU
+findutils installed:
 
 ```bash
 shellcheck --shell=bash packages/flake/*.sh
+zsh -n packages/flake/_flake
 python3 tests/test_cli.py
 ```
 
@@ -431,7 +458,14 @@ nix shell --inputs-from . nixpkgs#python3 nixpkgs#git --command \
     --cli "$PWD/result/bin/flake" --nixpkgs "$nixpkgs_source"
 ```
 
-CI runs both suites and the package build. The terminal suite covers app/package
+The completion suite exercises the packaged completion in a real Zsh line editor:
+
+```bash
+nix shell --inputs-from . nixpkgs#python3 nixpkgs#zsh --command \
+  python3 tests/test_completion.py --cli "$PWD/result/bin/flake"
+```
+
+CI runs all three suites and the package build. The terminal suite covers app/package
 selection, check selection, option navigation, cancellation, input updates, and
 development shells. It never rebuilds or activates a system.
 

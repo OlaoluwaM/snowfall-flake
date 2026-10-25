@@ -5,6 +5,7 @@
   shellcheck,
   findutils,
   jq,
+  zsh,
   ...
 }:
 runCommand "flake-cli-checks"
@@ -15,11 +16,13 @@ runCommand "flake-cli-checks"
       shellcheck
       findutils
       jq
+      zsh
     ];
   }
   ''
     cd ${../..}
     shellcheck --shell=bash packages/flake/*.sh
+    zsh -n packages/flake/_flake
     python3 tests/test_cli.py
     touch "$out"
   ''

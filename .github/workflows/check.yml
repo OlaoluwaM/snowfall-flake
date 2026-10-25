@@ -16,6 +16,10 @@ jobs:
         run: nix flake check --option abort-on-warn true
       - name: Build CLI with shell checks
         run: nix build .#default --out-link result --option abort-on-warn true
+      - name: Zsh completion terminal tests
+        run: |
+          nix shell --inputs-from . nixpkgs#python3 nixpkgs#zsh --command \
+            python3 tests/test_completion.py --cli "$PWD/result/bin/flake"
       - name: Real terminal integration tests
         run: |
           nixpkgs_source=$(nix eval --impure --raw --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.outPath')
