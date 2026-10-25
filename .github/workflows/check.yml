@@ -15,4 +15,10 @@ jobs:
       - name: Lint and regression tests
         run: nix flake check --option abort-on-warn true
       - name: Build CLI with shell checks
-        run: nix build .#default --no-link --option abort-on-warn true
+        run: nix build .#default --out-link result --option abort-on-warn true
+      - name: Real terminal integration tests
+        run: |
+          nixpkgs_source=$(nix eval --impure --raw --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.outPath')
+          nix shell --inputs-from . nixpkgs#python3 nixpkgs#git --command \
+            python3 tests/test_interactive.py \
+              --cli "$PWD/result/bin/flake" --nixpkgs "$nixpkgs_source"

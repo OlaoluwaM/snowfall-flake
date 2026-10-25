@@ -408,7 +408,7 @@ Run `nix flake check` for ShellCheck and the CLI regression suite, then
 `nix build .#default` to build the packaged CLI. Package builds also run Bash
 syntax checks and ShellCheck for the CLI and its helpers.
 
-For a quick local pass with Bash 4 or newer, Python 3, ShellCheck, and GNU findutils installed:
+For a quick local pass with Bash 4 or newer, Python 3, ShellCheck, jq, and GNU findutils installed:
 
 ```bash
 shellcheck --shell=bash packages/flake/*.sh
@@ -417,4 +417,24 @@ python3 tests/test_cli.py
 
 The regression suite replaces Nix, Gum, and rebuild/privilege commands with
 local fakes. It checks argument handling without fetching flakes or changing
-system configurations. Interactive terminal behaviour still needs manual testing.
+system configurations.
+
+The terminal suite runs the packaged CLI with real Nix and Gum in pseudo-terminals.
+It uses disposable local flakes, including a directory with spaces. Run it outside
+a Nix build sandbox so it can access the Nix store:
+
+```bash
+nix build .#default
+nixpkgs_source=$(nix eval --impure --raw --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.outPath')
+nix shell --inputs-from . nixpkgs#python3 nixpkgs#git --command \
+  python3 tests/test_interactive.py \
+    --cli "$PWD/result/bin/flake" --nixpkgs "$nixpkgs_source"
+```
+
+CI runs both suites and the package build. The terminal suite covers app/package
+selection, check selection, option navigation, cancellation, input updates, and
+development shells. It never rebuilds or activates a system.
+
+`flake check NAME` and `flake check --pick` build a check for the current platform
+without creating a result symlink. Use `flake check [FLAKE] --all-systems` to check
+a whole flake across platforms; that flag cannot be combined with a named check.
