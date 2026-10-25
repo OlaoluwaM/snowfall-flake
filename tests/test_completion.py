@@ -36,11 +36,13 @@ class Completion(unittest.TestCase):
         os.write(self.terminal.fd, (
             'fpath=("$SNOWFALL_COMPLETION_DIR" $fpath); '
             'autoload -Uz compinit; compinit -D; '
-            "PROMPT='READY> '; RPROMPT=; bindkey -e; "
+            "PROMPT='READ''Y> '; RPROMPT=; bindkey -e; "
             "capture() { print -r -- \"CAPTURE<$BUFFER>\"; BUFFER=; zle reset-prompt; }; "
             "zle -N capture; bindkey '^X^B' capture; "
             "nix() { print NIX_MUST_NOT_RUN; return 1; }; "
-            "print INITIALIZED\n"
+            # Split the readiness marker so the PTY's echo of this command
+            # cannot satisfy expect() before Zsh has executed the setup.
+            "print INIT''IALIZED\n"
         ).encode())
         self.terminal.expect('INITIALIZED\r\n')
         self.terminal.expect('READY> ')
